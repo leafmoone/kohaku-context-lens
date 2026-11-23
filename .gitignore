@@ -1,0 +1,29 @@
+# Local instructions, memory, agent team configs, reference checkout & verification tests
+/AGENTS.md
+/MEMORY.md
+.kt/
+KohakuTerrarium/
+tests/
+
+# Python build & virtual environments
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Node / frontend tooling caches
+node_modules/
+.vite/
+
+# OS & editor files
+.DS_Store
+Thumbs.db
+*.log
+*.tmp

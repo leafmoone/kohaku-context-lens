@@ -1,0 +1,29 @@
+name: kohaku-context-lens
+version: 0.1.0
+description: Read-only context anatomy for live and saved KohakuTerrarium sessions.
+ui:
+  sdk: ">=1.2,<2"
+  root: ui
+  entry: ui/index.js
+  styles: [ui/style.css]
+  i18n:
+    en: ui/i18n/en.json
+    zh-CN: ui/i18n/zh-CN.json
+    zh-TW: ui/i18n/zh-TW.json
+  api: kohaku_context_lens.routes:router
+  contributes:
+    - { kind: settings, id: preferences, label: Context Lens, owner: package }
+    - kind: overlay
+      id: stage
+      label: Context Lens Stage
+      owner: package
+      anchor: top-left
+      width: 1
+      height: 1
+      draggable: false
+      resizable: false
+      clickThrough: true
+      defaultVisible: true
+    - { kind: tab, id: inspector, label: Context Lens, owner: package }
+    - { kind: graph-badge, id: watermark, label: Context Watermark, owner: package, nodes: [creature] }
+    - { kind: command, id: toggle-lens, label: Toggle Context Lens, shortcut: Ctrl+Alt+C }
