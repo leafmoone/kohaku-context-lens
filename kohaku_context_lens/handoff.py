@@ -8,10 +8,11 @@ from .cache import event_kind, timestamp
 from .models import HandoffResult, Target
 
 _COMPACT_PREFIX = "[Previous context summary (compact round "
+_COMPACT_ROUND = re.compile(r"\[Previous context summary \(compact round (\d+)\)\]")
 _COMPACT_EVENTS = {"compact_complete", "compact_replace", "compact_summary"}
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 _SUMMARY_HEADING = re.compile(r"^#{1,6}[ \t]+(.+)$")
-_FENCE = re.compile(r"^\s*(?:[-+*] )?(`{3,})(.*)$")
+_FENCE = re.compile(r"^[ \t]*(?:[-+*] )?(`{3,}|~{3,})(.*)$")
 _LIST = re.compile(r"^[-+*] ")
 _UI = re.compile(r"<ui(?:\s[^>]*)?>.*?</ui\s*>|<ui\b.*\Z", re.DOTALL | re.IGNORECASE)
 _OUTSIDE_WARNING = re.compile(
@@ -48,12 +49,12 @@ def recent_quotes(values: Sequence[str], count: int) -> list[str]:
     ]
 
 
-def fence_width(line: str, opened: int) -> int:
+def fence_delimiter(line: str, opened: str) -> str:
     if match := _FENCE.match(line):
         if not opened:
-            return len(match[1])
-        if len(match[1]) >= opened and not match[2].strip():
-            return 0
+            return match[1]
+        if match[1].startswith(opened) and not match[2].strip():
+            return ""
     return opened
 
 
@@ -79,7 +80,7 @@ def summary_body(summary: str) -> str:
 def compact_sections(summary: str) -> tuple[list[str], list[str], list[str]]:
     summary = summary_body(summary)
     sections: dict[str, list[str]] = {"goal": [], "progress": [], "next": []}
-    part, body, fence, heading = "progress", [], 0, ""
+    part, body, fence, heading = "progress", [], "", ""
     for line in summary.splitlines():
         match = _SUMMARY_HEADING.match(line) if not fence else None
         if match and (destination := summary_part(match[1])):
@@ -94,7 +95,7 @@ def compact_sections(summary: str) -> tuple[list[str], list[str], list[str]]:
                 and ("[PENDING]" in line or "[IN PROGRESS]" in line)
             ):
                 sections["next"].append(one_line(line.lstrip("- "), 200))
-            fence = fence_width(line, fence)
+            fence = fence_delimiter(line, fence)
     if block := "\n".join(body).strip():
         sections[part].append(clip(block, 3200))
     return sections["goal"][:2], sections["progress"][:3], sections["next"][:2]
@@ -103,26 +104,27 @@ def compact_sections(summary: str) -> tuple[list[str], list[str], list[str]]:
 def bullets(entries: Sequence[str]) -> str:
     output = []
     for entry in entries:
-        fence = 0
+        fence = padding = closing_indent = ""
         for index, line in enumerate(clean_text(entry).splitlines()):
             if not fence and line.startswith("## "):
                 line = "#" + line
-            if not fence and _LIST.match(line):
+            next_fence = fence_delimiter(line, fence)
+            if fence:
+                output.append(padding + line if line else "")
+            elif _LIST.match(line):
                 output.append("- " + line[2:])
-            elif not index:
-                # A fence needs its own continuation line to be Markdown list content.
-                output.extend(
-                    ("-", "  " + line) if _FENCE.match(line) else ("- " + line,)
-                )
-            elif line:
-                output.append(
-                    line if not fence and line.startswith("  ") else "  " + line
-                )
+                padding = closing_indent = "  "
+            elif not index and not next_fence:
+                output.append("- " + line)
             else:
-                output.append("")
-            fence = fence_width(line, fence)
+                if not index:
+                    output.append("-")
+                padding = "" if line.startswith("  ") else "  "
+                output.append(padding + line if line else "")
+                closing_indent = padding + line[: len(line) - len(line.lstrip())]
+            fence = next_fence
         if fence:
-            output.append("  " + "`" * fence)
+            output.append(closing_indent + fence)
     return "\n".join(output)
 
 
@@ -236,7 +238,7 @@ def file_lines(
     ]
     lines.extend(
         f"{one_line(path, 220)} — {count} {'call' if count == 1 else 'calls'} ({one_line(', '.join(names), 180)})"
-        for path, count, names in sorted(paths.values(), key=lambda item: -item[1])[:16]
+        for path, count, names in sorted(paths.values(), key=lambda item: -item[1])
     )
     context_docs = {path_key(path): path for path in sorted(docs, reverse=True)}
     return lines + [
@@ -252,22 +254,17 @@ def retry_succeeded(
     peers: Sequence[dict[str, Success]],
 ) -> bool:
     key = path_key(path)
-    for group in (own, *peers):
-        for candidate, (success_index, success_ts) in group.items():
-            if candidate != key and not (
-                ":" not in candidate and key.endswith("/" + candidate)
-            ):
-                continue
-            if group is own and success_index > index:
-                return True
-            if (
-                group is not own
-                and when is not None
-                and success_ts is not None
-                and success_ts > when
-            ):
-                return True
-    return False
+    if (success := own.get(key)) and success[0] > index:
+        return True
+    # Relative paths do not identify the same worktree across creatures.
+    return (
+        when is not None
+        and (key.startswith("/") or ":" in key[:2])
+        and any(
+            (success := group.get(key)) and success[1] is not None and success[1] > when
+            for group in peers
+        )
+    )
 
 
 def recent_blockers(
@@ -320,13 +317,17 @@ def compact_message(message: Row) -> bool:
     return bool(
         meta.get("compact_summary")
         or event_kind(message) == "compact_summary"
+        or message.get("role") == "compact_summary"
         or content.startswith(_COMPACT_PREFIX)
     )
 
 
 def message_order(row: Row) -> tuple[int | None, float | None]:
     meta = row_value(row.get("metadata"))
-    return turn_index(row) or turn_index(meta), row_time(row) or row_time(meta)
+    turn = turn_index(row)
+    return turn if turn is not None else turn_index(meta), row_time(row) or row_time(
+        meta
+    )
 
 
 def is_after(row: Row, marker: Row) -> bool | None:
@@ -337,6 +338,13 @@ def is_after(row: Row, marker: Row) -> bool | None:
     if turn is not None and cutoff is not None and turn != cutoff:
         return turn > cutoff
     return None
+
+
+def compact_round(row: Row) -> int | None:
+    if type(row.get("round")) is int:
+        return row["round"]
+    match = _COMPACT_ROUND.match(text_value(row.get("content")) or "")
+    return int(match[1]) if match else None
 
 
 def after_compaction(
@@ -356,12 +364,16 @@ def after_compaction(
     )
     marker = messages[message_index] if message_index >= 0 else {}
     compact = events[event_index] if event_index >= 0 else {}
-    marker_is_newer = is_after(marker, compact) is True
+    marker_round, event_round = compact_round(marker), compact_round(compact)
+    covered = row_value(marker.get("metadata")).get("compact_result_event_ids")
+    relative = is_after(marker, compact)
+    if marker_round is not None and event_round is not None:
+        relative = None if marker_round == event_round else marker_round > event_round
+    elif covered and covered == compact.get("compact_result_event_ids"):
+        relative = None
+    marker_is_newer = relative is True
     event_summary = text_value(compact.get("summary") or compact.get("content")) or ""
-    message_summary = text_value(marker.get("content")) or ""
-    same_summary = bool(
-        event_summary and summary_body(event_summary) == summary_body(message_summary)
-    )
+    message_summary = text_value(marker.get("content") or marker.get("summary")) or ""
     summary = message_summary if marker_is_newer or not event_summary else event_summary
     cutoff = marker if marker_is_newer else compact or marker
     post_events = [
@@ -369,8 +381,8 @@ def after_compaction(
         for row in events[event_index + 1 :]
         if not marker_is_newer or is_after(row, marker)
     ]
-    # A dated event is authoritative unless the snapshot supplies its matching or newer summary.
-    use_position = event_index < 0 or marker_is_newer or same_summary
+    # Undated legacy snapshots can fall back to the last marker's position.
+    use_position = (event_index < 0 or message_index >= 0) and relative is not False
     post_messages = [
         row
         for row in messages[message_index + 1 :]
@@ -381,6 +393,17 @@ def after_compaction(
 
 def outcome(value: object) -> str:
     return one_line(_UI.sub(" ", "\n".join(content_texts(value))), 600)
+
+
+def incremental_quotes(
+    events: Sequence[str], snapshot: Sequence[str], limit: int
+) -> list[str]:
+    # Keep snapshot-only replies newer than the last persisted overlap.
+    recorded = set(events) - {""}
+    overlap = next(
+        (i for i in range(len(snapshot) - 1, -1, -1) if snapshot[i] in recorded), -1
+    )
+    return recent_quotes([*events, *snapshot[overlap + 1 :]], limit)
 
 
 def packet(
@@ -401,24 +424,24 @@ def packet(
         and row_value(row.get("metadata")).get("kind")
         not in ("tool_results", "rules", "memory", "skills")
     ]
-    recent_users.extend(
+    event_users = [
         text_of(row.get("content"), 440)
         for row in post_events
         if event_kind(row) in ("user_input", "user_message")
-    )
+    ]
     outcomes = [
         outcome(row.get("content"))
         for row in post_messages
         if row.get("role") == "assistant"
     ]
-    outcomes.extend(
+    event_outcomes = [
         outcome(row_value(row.get("message")).get("content", row.get("content")))
         for row in post_events
         if event_kind(row) == "assistant_message"
-    )
+    ]
     goal, progress, next_steps = compact_sections(summary)
-    goal.extend(recent_quotes(recent_users, 2))
-    progress.extend(recent_quotes(outcomes, 3))
+    goal.extend(incremental_quotes(event_users, recent_users, 2))
+    progress.extend(incremental_quotes(event_outcomes, outcomes, 3))
     own, docs, successful_paths = file_activity(events, messages)
     peer_counts, peer_successes = [], []
     for name, peer_events, peer_messages in peers:
