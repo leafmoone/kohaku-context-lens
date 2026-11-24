@@ -44,7 +44,7 @@ from .anatomy import (
     turn_index,
 )
 from .cache import cache_series, event_kind, hit_rate, timestamp, token_counts
-from .handoff import packet
+from .handoff import Peer, packet
 from .models import (
     Analysis,
     Anatomy,
@@ -675,18 +675,22 @@ def manifest_wiring(manifest: Row, field: str, cid: str | None) -> list[str]:
     ]
 
 
+def saved_handoff_source(store: SessionStore, name: str) -> Peer:
+    events = handoff_events(store, name, {})
+    messages = store.load_conversation(name)
+    if messages is None:
+        messages = replay_conversation(events, include_metadata=True)
+    return name, events, messages
+
+
 def saved_handoff(
     store: SessionStore, saved_name: str, agent: str | None
 ) -> HandoffResult:
-    _, selected, members = select_saved(store, agent)
+    names, selected, members = select_saved(store, agent)
     member = members.get(selected, {})
     config = row_value(member.get("config_snapshot"))
-    events = selected_events(
-        event_rows(store, selected), stored_branch_view(store, selected)
-    )
-    messages = store.load_conversation(selected)
-    if messages is None:
-        messages = replay_conversation(events, include_metadata=True)
+    _, events, messages = saved_handoff_source(store, selected)
+    peers = [saved_handoff_source(store, name) for name in names if name != selected]
     manifest = row_value(store.meta.get("live_graph_manifest"))
     cid = text_value(member.get("creature_id"))
     return packet(
@@ -697,6 +701,7 @@ def saved_handoff(
         config_model(config) or recorded_model(events),
         manifest_wiring(manifest, "listen", cid),
         manifest_wiring(manifest, "send", cid) + output_destinations(config),
+        peers,
     )
 
 
@@ -714,18 +719,28 @@ async def handoff_saved(
     )
 
 
-def handoff_data(
-    store: SessionStore,
-    namespace: str,
-    branch_view: dict[int, int],
-) -> tuple[list[dict[str, Any]], list[tuple[str, Row]]]:
-    return (
-        selected_events(
-            event_rows(store, namespace),
-            stored_branch_view(store, namespace) or branch_view,
-        ),
-        recent_channels(store),
+def handoff_events(
+    store: SessionStore, namespace: str, branch_view: dict[int, int]
+) -> list[dict[str, Any]]:
+    return selected_events(
+        event_rows(store, namespace),
+        stored_branch_view(store, namespace) or branch_view,
     )
+
+
+async def live_handoff_source(
+    service: LocalTerrariumService, creature: Creature
+) -> Peer:
+    agent = creature.agent
+    name = agent.config.name
+    messages = agent.capture_context().messages
+    store = live_store(service, creature)
+    events = (
+        await store.run(handoff_events, store, name, live_branch_path(agent))
+        if store is not None
+        else []
+    )
+    return name, events, messages
 
 
 async def handoff_live(
@@ -737,13 +752,13 @@ async def handoff_live(
     creature = creatures[index]
     agent = creature.agent
     target = live_ref(session_id, creature)
-    messages = agent.capture_context().messages
-    store = live_store(local, creature)
-    events, channels = (
-        await store.run(handoff_data, store, target["agent"], live_branch_path(agent))
-        if store is not None
-        else ([], [])
+    sources = await asyncio.gather(
+        *(live_handoff_source(local, member) for member in creatures)
     )
+    _, events, messages = sources[index]
+    peers = sources[:index] + sources[index + 1 :]
+    store = live_store(local, creature)
+    channels = await store.run(recent_channels, store) if store is not None else []
     graph = local.engine.get_graph(session_id)
     for name in sorted(getattr(graph, "channels", ())):
         channels.extend(
@@ -766,4 +781,5 @@ async def handoff_live(
         live_target(creature, index == 0)["llm_name"],
         listen,
         send,
+        peers,
     )
