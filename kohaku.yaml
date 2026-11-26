@@ -1,6 +1,10 @@
 name: kohaku-context-lens
 version: 0.1.0
-description: Read-only context anatomy for live and saved KohakuTerrarium sessions.
+framework: ">=2.2.0,<3.0.0"
+license: MIT
+author: leafmoone
+description: Read-only context anatomy, KV cache forensics, speed telemetry, and lossless handoff for KohakuTerrarium sessions.
+repository: https://github.com/leafmoone/kohaku-context-lens
 ui:
   sdk: ">=1.2,<2"
   root: ui

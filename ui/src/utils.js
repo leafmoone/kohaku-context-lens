@@ -47,6 +47,32 @@ export function formatWholePct(ratio) {
   return `${Math.round(ratio * 100)}%`
 }
 
+export function formatDurationMs(ms) {
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms <= 0) {
+    return "--"
+  }
+  if (ms < 1000) {
+    return `${Math.round(ms)}ms`
+  }
+  if (ms < 60000) {
+    return `${(ms / 1000).toFixed(2)}s`
+  }
+  return `${(ms / 60000).toFixed(1)}m`
+}
+
+export function formatTps(tps) {
+  if (typeof tps !== "number" || !Number.isFinite(tps) || tps <= 0) {
+    return "--"
+  }
+  if (tps >= 1000) {
+    return `${(tps / 1000).toFixed(1)}k/s`
+  }
+  if (tps >= 100) {
+    return `${Math.round(tps)}/s`
+  }
+  return `${tps.toFixed(1)}/s`
+}
+
 export function parseFragilePatterns(rawPatterns) {
   return String(rawPatterns || "")
     .split(",")

@@ -24,8 +24,10 @@ import { getLensStore } from "./store.js"
 import {
   buildBucketEntries,
   evaluateWatermarkStatus,
+  formatDurationMs,
   formatPct,
   formatTokens,
+  formatTps,
   formatWholePct,
 } from "./utils.js"
 
@@ -622,6 +624,44 @@ export const DockLensOverlay = defineComponent({
               ),
             ]),
           ]),
+        )
+
+        const ttftText = formatDurationMs(context ? context.last_ttft_ms : null)
+        const prefillText = formatTps(context ? context.last_prefill_tps : null)
+        const decodeText = formatTps(context ? context.last_decode_tps : null)
+        const e2eText = formatTps(context ? context.last_e2e_tps : null)
+        const latencyText = formatDurationMs(context ? context.last_duration_ms : null)
+        const e2eTitle =
+          latencyText !== "--"
+            ? `${tr("popover.speed.latency", null)}: ${latencyText}`
+            : tr("popover.speed.e2e", null)
+
+        bodyChildren.push(
+          h(
+            "div",
+            {
+              class: "kcl-speed-strip",
+              "data-test": "kcl-popover-speed",
+            },
+            [
+              h("div", { class: "kcl-speed-cell", title: `${tr("popover.speed.ttft", null)}: ${ttftText}` }, [
+                h("span", { class: "kcl-speed-cell__label" }, tr("popover.speed.ttft", null)),
+                h("span", { class: "kcl-speed-cell__value kcl-mono" }, ttftText),
+              ]),
+              h("div", { class: "kcl-speed-cell", title: `${tr("popover.speed.ftps", null)}: ${prefillText}` }, [
+                h("span", { class: "kcl-speed-cell__label" }, tr("popover.speed.ftps", null)),
+                h("span", { class: "kcl-speed-cell__value kcl-mono" }, prefillText),
+              ]),
+              h("div", { class: "kcl-speed-cell", title: `${tr("popover.speed.decode", null)}: ${decodeText}` }, [
+                h("span", { class: "kcl-speed-cell__label" }, tr("popover.speed.decode", null)),
+                h("span", { class: "kcl-speed-cell__value kcl-mono" }, decodeText),
+              ]),
+              h("div", { class: "kcl-speed-cell", title: e2eTitle }, [
+                h("span", { class: "kcl-speed-cell__label" }, tr("popover.speed.e2e", null)),
+                h("span", { class: "kcl-speed-cell__value kcl-mono" }, e2eText),
+              ]),
+            ],
+          ),
         )
 
         if (Array.isArray(analysis.creatures) && analysis.creatures.length > 1) {

@@ -11,8 +11,12 @@ Open the **Context Lens** tab to compare creatures or select a saved session. Th
 ## What Context Lens shows
 
 - **Six-dimension context anatomy:** Estimate tokens for the system prompt, rules and memory, skills and tools, tool outputs, chat and channels, and reasoning and compaction. See up to ten tool outputs ranked by estimated text tokens in the inspected context, with previews and their share of the estimate.
-- **Turn-by-turn KV cache forensics:** Compare prompt, cached, and completion tokens and cache hit rates. See likely causes of sharp drops: recorded compaction, system-prompt or tool-schema changes, or a long idle gap. Unexplained drops stay marked as unknown.
+- **Turn-by-turn KV cache & speed telemetry:** Compare prompt, cached, and completion tokens, cache hit rates, and per-turn generation speed (`TTFT`, `FTPS` prefill rate, pure `Decode TPS`, `E2E TPS`, and call latency). See likely causes of sharp cache drops: recorded compaction, system-prompt or tool-schema changes, or a long idle gap. Unexplained drops stay marked as unknown, and unavailable first-token fields on un-observed historical archives remain blank rather than zero.
 - **Compaction risk radar:** See when context approaches the model window or compaction threshold, and get a model-based signature-chain warning when compaction is not explicitly disabled.
 - **One-click Markdown handoff:** Select a live local creature or saved `.kohakutr` session and click **Generate Handoff** to extract the goal, decisions, files touched, recent channel activity, and blockers or next steps. The packet helps start a fresh session and is generated deterministically from the recorded context, without a model call.
 
 Token estimates exclude unrecorded prompt injections, provider framing, and image or file token costs. Unavailable context limits and hit rates are not shown as zero.
+
+## License
+
+Released under the [MIT License](LICENSE). Built as an extension package for [KohakuTerrarium](https://github.com/Kohaku-Lab/KohakuTerrarium).

@@ -15,8 +15,10 @@ import { getLensStore } from "./store.js"
 import {
   buildBucketEntries,
   evaluateWatermarkStatus,
+  formatDurationMs,
   formatPct,
   formatTokens,
+  formatTps,
 } from "./utils.js"
 
 const CHART_W = 760
@@ -430,6 +432,35 @@ export const InspectorTab = defineComponent({
           ? `${Math.round(wm.effectiveTokens).toLocaleString()} tok`
           : ""
 
+      const decodeText = formatTps(context ? context.last_decode_tps : null)
+      const e2eText = formatTps(context ? context.last_e2e_tps : null)
+      const ttftText = formatDurationMs(context ? context.last_ttft_ms : null)
+      const prefillText = formatTps(context ? context.last_prefill_tps : null)
+      const latencyText = formatDurationMs(context ? context.last_duration_ms : null)
+      const hasDecode = decodeText !== "--"
+      const hasE2e = e2eText !== "--"
+      const speedValue = hasDecode
+        ? decodeText
+        : hasE2e
+          ? `${e2eText} (${tr("inspector.speed.e2eShort", null)})`
+          : "--"
+
+      const speedSubParts = []
+      if (ttftText !== "--") {
+        speedSubParts.push(`${tr("inspector.table.ttft", null)} ${ttftText}`)
+      }
+      if (prefillText !== "--") {
+        speedSubParts.push(`${tr("inspector.table.ftps", null)} ${prefillText}`)
+      }
+      if (!hasDecode && hasE2e && speedSubParts.length === 0) {
+        speedSubParts.push(tr("inspector.speed.e2eBasis", null))
+      }
+      if (latencyText !== "--") {
+        speedSubParts.push(latencyText)
+      }
+      const speedSub =
+        speedSubParts.length > 0 ? speedSubParts.join(" · ") : tr("inspector.speed.noData", null)
+
       return h("div", { class: "kcl-kpi-grid" }, [
         h("div", { class: "kcl-kpi-card" }, [
           h("div", { class: "kcl-kpi-card__label" }, tr("inspector.kpi.tokens", null)),
@@ -470,6 +501,19 @@ export const InspectorTab = defineComponent({
             dropTurns.value.length > 0
               ? `${dropTurns.value.length} ${tr("inspector.chart.dropLegend", null)}`
               : tr("inspector.drop.none", null),
+          ),
+        ]),
+        h("div", { class: "kcl-kpi-card", "data-test": "kcl-kpi-speed" }, [
+          h("div", { class: "kcl-kpi-card__label" }, tr("inspector.kpi.speed", null)),
+          h(
+            "div",
+            { class: "kcl-kpi-card__value kcl-mono", title: speedValue },
+            speedValue,
+          ),
+          h(
+            "div",
+            { class: "kcl-kpi-card__sub kcl-mono", title: speedSub },
+            speedSub,
           ),
         ]),
         h("div", { class: "kcl-kpi-card" }, [
@@ -789,6 +833,41 @@ export const InspectorTab = defineComponent({
                 null,
                 `${tr("inspector.table.hitRate", null)}: ${formatPct(detail.hit_rate)}`,
               ),
+              formatDurationMs(detail.ttft_ms) !== "--"
+                ? h(
+                    "span",
+                    null,
+                    `${tr("inspector.table.ttft", null)}: ${formatDurationMs(detail.ttft_ms)}`,
+                  )
+                : null,
+              formatTps(detail.prefill_tps) !== "--"
+                ? h(
+                    "span",
+                    null,
+                    `${tr("inspector.table.ftps", null)}: ${formatTps(detail.prefill_tps)}`,
+                  )
+                : null,
+              formatTps(detail.decode_tps) !== "--"
+                ? h(
+                    "span",
+                    null,
+                    `${tr("inspector.table.decodeTps", null)}: ${formatTps(detail.decode_tps)}`,
+                  )
+                : null,
+              formatTps(detail.e2e_tps) !== "--"
+                ? h(
+                    "span",
+                    null,
+                    `${tr("inspector.table.e2eTps", null)}: ${formatTps(detail.e2e_tps)}`,
+                  )
+                : null,
+              formatDurationMs(detail.duration_ms) !== "--"
+                ? h(
+                    "span",
+                    null,
+                    `${tr("inspector.table.latency", null)}: ${formatDurationMs(detail.duration_ms)}`,
+                  )
+                : null,
               detail.drop
                 ? h(
                     "span",
@@ -852,6 +931,11 @@ export const InspectorTab = defineComponent({
                       h("th", { class: "is-num" }, tr("inspector.table.cachedTokens", null)),
                       h("th", { class: "is-num" }, tr("inspector.table.completionTokens", null)),
                       h("th", { class: "is-num" }, tr("inspector.table.hitRate", null)),
+                      h("th", { class: "is-num" }, tr("inspector.table.ttft", null)),
+                      h("th", { class: "is-num" }, tr("inspector.table.ftps", null)),
+                      h("th", { class: "is-num" }, tr("inspector.table.decodeTps", null)),
+                      h("th", { class: "is-num" }, tr("inspector.table.e2eTps", null)),
+                      h("th", { class: "is-num" }, tr("inspector.table.latency", null)),
                       h("th", null, tr("inspector.table.dropReason", null)),
                     ]),
                   ]),
@@ -869,6 +953,11 @@ export const InspectorTab = defineComponent({
                           formatTokens(turn.completion_tokens),
                         ),
                         h("td", { class: "is-num kcl-mono" }, formatPct(turn.hit_rate)),
+                        h("td", { class: "is-num kcl-mono" }, formatDurationMs(turn.ttft_ms)),
+                        h("td", { class: "is-num kcl-mono" }, formatTps(turn.prefill_tps)),
+                        h("td", { class: "is-num kcl-mono" }, formatTps(turn.decode_tps)),
+                        h("td", { class: "is-num kcl-mono" }, formatTps(turn.e2e_tps)),
+                        h("td", { class: "is-num kcl-mono" }, formatDurationMs(turn.duration_ms)),
                         h(
                           "td",
                           null,

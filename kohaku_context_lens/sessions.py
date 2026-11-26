@@ -43,7 +43,7 @@ from .anatomy import (
     text_value,
     turn_index,
 )
-from .cache import cache_series, event_kind, hit_rate, timestamp, token_counts
+from .cache import cache_reading, event_kind, hit_rate, timestamp, token_counts
 from .handoff import Peer, packet
 from .models import (
     Analysis,
@@ -54,9 +54,11 @@ from .models import (
     CreatureSummary,
     CreatureTarget,
     HandoffResult,
+    PerfMetrics,
     Target,
     Targets,
 )
+from .perf import ensure_perf_taps, latest_live_sample, metrics, perf_key
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,12 +68,13 @@ class Usage:
     events: list[dict[str, Any]]
     cache_turns: list[CacheTurn]
     llm_name: str | None
+    perf: PerfMetrics
 
 
 _CONTEXT_SELECTOR = re.compile(
     r"(?:@|,)context\s*=\s*([1-9][0-9]{0,8})\s*([km])(?=,|\s|$)", re.IGNORECASE
 )
-_NO_USAGE = Usage(None, None, [], [], None)
+_NO_USAGE = Usage(None, None, [], [], None, metrics(None, None, 0, 0))
 type AnalysisRow = tuple[CreatureTarget, Context, Anatomy, list[CacheTurn]]
 
 
@@ -179,23 +182,36 @@ def saved_agents(store: SessionStore) -> list[str]:
         return names
     discovered = discover_agents(map(key_text, scan_keys(store.events)))
     stored = list(map(key_text, scan_keys(store.conversation)))
+    members = saved_members(store)
     if not names:
-        return list(dict.fromkeys(discovered + stored))
-    active = set(discovered) | saved_members(store).keys()
-    nonempty = [
-        name
-        for name in names
-        if name in active
-        or positive_int(store.load_token_usage(name).get("last_prompt_tokens"))
-        is not None
-        or (name in stored and store.load_conversation(name))
-    ]
-    return nonempty or names
+        names = list(dict.fromkeys(discovered + stored))
+    else:
+        active = set(discovered) | members.keys()
+        nonempty = [
+            name
+            for name in names
+            if name in active
+            or positive_int(store.load_token_usage(name).get("last_prompt_tokens"))
+            is not None
+            or (name in stored and store.load_conversation(name))
+        ]
+        names = nonempty or names
+    order = {name: i for i, name in enumerate(names)}
+    return sorted(
+        names,
+        key=lambda name: (
+            not bool(members.get(name, {}).get("is_privileged")),
+            members.get(name, {}).get("creature_id") != "root",
+            name != "root",
+            order[name],
+        ),
+    )
 
 
 async def list_targets(service: TerrariumService, session_dir: Path) -> Targets:
     targets: Targets = {"live_sessions": [], "saved_sessions": []}
     if isinstance(service, LocalTerrariumService):
+        ensure_perf_taps(service)
         for graph in service.engine.list_graphs():
             sid = graph.graph_id
             members = local_members(service, sid)
@@ -288,7 +304,6 @@ def usage_for(
     store: SessionStore,
     namespace: str,
     detail: bool,
-    need_events: bool,
     branch_view: dict[int, int] | None,
 ) -> Usage:
     state = store.load_token_usage(namespace)
@@ -296,47 +311,44 @@ def usage_for(
     prompt, cached, _ = token_counts(rollups[-1]) if rollups else (0, 0, 0)
     ratio = hit_rate(prompt, cached)
     last_prompt = positive_int(state.get("last_prompt_tokens"))
-    events: list[dict[str, Any]] = []
-    series: list[CacheTurn] = []
     explicit_branch = stored_branch_view(store, namespace)
-    if (
-        detail
-        or need_events
-        or explicit_branch
-        or ratio is None
-        or "last_prompt_tokens" not in state
-    ):
-        raw_events = event_rows(store, namespace)
-        events = selected_events(raw_events, explicit_branch or branch_view)
-        latest_call = next(
-            (row for row in reversed(events) if event_kind(row) == "token_usage"), {}
+    raw_events = event_rows(store, namespace)
+    events = selected_events(raw_events, explicit_branch or branch_view)
+    latest_call = next(
+        (row for row in reversed(events) if event_kind(row) == "token_usage"), {}
+    )
+    if "last_prompt_tokens" not in state:
+        last_prompt = positive_int(
+            latest_call.get("prompt_tokens", latest_call.get("tokens_in"))
         )
-        if "last_prompt_tokens" not in state:
-            last_prompt = positive_int(
-                latest_call.get("prompt_tokens", latest_call.get("tokens_in"))
-            )
-        if detail or ratio is None or explicit_branch:
-            # KT rollups share one key per turn. A newer sibling total invalidates that row on this branch.
-            chosen_ids = {row.get("event_id") for row in events}
-            latest_totals = {
-                turn_index(row): row.get("event_id")
-                for row in raw_events
-                if event_kind(row) == "turn_token_usage"
-            }
-            comparable = [
-                row
-                for row in rollups
-                if turn_index(row) not in latest_totals
-                or latest_totals[turn_index(row)] in chosen_ids
-            ]
-            series = cache_series(comparable, events)
-            if series:
-                ratio = series[-1]["hit_rate"]
-            else:
-                prompt, cached, _ = token_counts(latest_call)
-                ratio = hit_rate(prompt, cached)
+    # KT rollups share one key per turn. A newer sibling total invalidates that row on this branch.
+    chosen_ids = {row.get("event_id") for row in events}
+    latest_totals = {
+        turn_index(row): row.get("event_id")
+        for row in raw_events
+        if event_kind(row) == "turn_token_usage"
+    }
+    comparable = [
+        row
+        for row in rollups
+        if turn_index(row) not in latest_totals
+        or latest_totals[turn_index(row)] in chosen_ids
+    ]
+    samples = {row["event_id"]: row for row in store.state.get(perf_key(namespace), [])}
+    series, perf = cache_reading(comparable, events, samples)
+    if detail or ratio is None or explicit_branch:
+        if series:
+            ratio = series[-1]["hit_rate"]
+        else:
+            prompt, cached, _ = token_counts(latest_call)
+            ratio = hit_rate(prompt, cached)
     return Usage(
-        last_prompt, ratio, events, series if detail else [], recorded_model(events)
+        last_prompt,
+        ratio,
+        events,
+        series if detail else [],
+        recorded_model(events),
+        perf,
     )
 
 
@@ -355,6 +367,11 @@ def make_context(
         "compact_enabled": enabled,
         "cache_hit_rate": usage.hit_rate,
         "signature_fragile": signature_fragile(llm_name, enabled),
+        "last_duration_ms": usage.perf["duration_ms"],
+        "last_ttft_ms": usage.perf["ttft_ms"],
+        "last_prefill_tps": usage.perf["prefill_tps"],
+        "last_decode_tps": usage.perf["decode_tps"],
+        "last_e2e_tps": usage.perf["e2e_tps"],
     }
 
 
@@ -412,12 +429,13 @@ async def live_row(
             store,
             target["agent"],
             selected,
-            False,
             live_branch_path(agent),
         )
         if store is not None
         else _NO_USAGE
     )
+    if not usage.events and (sample := latest_live_sample(agent)) is not None:
+        usage = replace(usage, perf=sample)
     if has_live_prompt:
         usage = replace(usage, last_prompt=live_prompt)
     context = make_context(
@@ -485,6 +503,7 @@ async def analyze_live(
     creature_id: str | None,
 ) -> Analysis:
     service, creatures, index = select_live(service, session_id, creature_id)
+    ensure_perf_taps(service)
     rows = await asyncio.gather(
         *(
             live_row(service, creature, i == 0, i == index)
@@ -503,9 +522,7 @@ def saved_row(
 ) -> AnalysisRow:
     config = row_value(member.get("config_snapshot"))
     snapshot = store.load_conversation(agent)
-    usage = usage_for(
-        store, agent, selected, snapshot is None or not config_model(config), None
-    )
+    usage = usage_for(store, agent, selected, None)
     basis: Basis = "saved_snapshot"
     if snapshot is None:
         snapshot = replay_conversation(usage.events, include_metadata=True)
@@ -561,10 +578,21 @@ def select_saved(
     names = saved_agents(store)
     if not names:
         raise TargetNotFound("Saved session contains no agents")
-    selected = names[0] if agent in (None, "", "root") else agent
-    if selected not in names:
-        raise TargetNotFound("Agent not found in this saved session")
     members = saved_members(store)
+    selected = agent if agent and agent in names else None
+    if selected is None and agent:
+        selected = next(
+            (
+                name
+                for name in names
+                if members.get(name, {}).get("creature_id") == agent
+            ),
+            None,
+        )
+    if selected is None:
+        if agent not in (None, "", "root"):
+            raise TargetNotFound("Agent not found in this saved session")
+        selected = names[0]
     if names[0] not in members and store.meta.get("config_type") == "agent":
         members[names[0]] = {"config_snapshot": store.meta.get("config_snapshot")}
     return names, selected, members
@@ -582,9 +610,19 @@ def saved_ref(saved_name: str, agent: str) -> Target:
 
 def saved_result(store: SessionStore, saved_name: str, agent: str | None) -> Analysis:
     names, selected, members = select_saved(store, agent)
+    has_privileged = any(
+        member.get("is_privileged") is True for member in members.values()
+    )
     rows = [
-        saved_row(store, name, members.get(name, {}), i == 0, name == selected)
+        saved_row(
+            store,
+            name,
+            member,
+            bool(member.get("is_privileged")) if has_privileged else i == 0,
+            name == selected,
+        )
         for i, name in enumerate(names)
+        for member in (members.get(name, {}),)
     ]
     populated = [
         row

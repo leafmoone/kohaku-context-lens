@@ -282,6 +282,43 @@ html.dark .kcl-graph-badge {
   gap: 8px;
 }
 
+/* Compact 4-metric speed summary strip inside the dock popover */
+.kcl-speed-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.kcl-speed-cell {
+  padding: 5px 6px;
+  border-radius: 0.45rem;
+  border: 1px solid var(--kcl-border);
+  background: var(--kcl-surface);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.kcl-speed-cell__label {
+  font-size: 10px;
+  line-height: 1.2;
+  color: var(--kcl-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kcl-speed-cell__value {
+  font-size: 11px;
+  line-height: 1.25;
+  font-weight: 600;
+  color: var(--kcl-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .kcl-metric-box {
   padding: 8px 10px;
   border-radius: 0.5rem;
@@ -732,7 +769,7 @@ html.dark .kcl-btn--primary {
 
 .kcl-kpi-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
   gap: 12px;
 }
 
@@ -985,6 +1022,10 @@ html.dark .kcl-btn--primary {
 
   .kcl-bucket-list {
     grid-template-columns: 1fr;
+  }
+
+  .kcl-speed-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .kcl-settings__input-text {

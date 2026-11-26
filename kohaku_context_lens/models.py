@@ -42,6 +42,11 @@ class Context(TypedDict):
     compact_enabled: bool | None
     cache_hit_rate: float | None
     signature_fragile: bool
+    last_duration_ms: float | None
+    last_ttft_ms: float | None
+    last_prefill_tps: float | None
+    last_decode_tps: float | None
+    last_e2e_tps: float | None
 
 
 class CreatureSummary(Context):
@@ -102,7 +107,15 @@ class CacheDrop(TypedDict):
     event_id: int | None
 
 
-class CacheTurn(TypedDict):
+class PerfMetrics(TypedDict):
+    duration_ms: float | None
+    ttft_ms: float | None
+    prefill_tps: float | None
+    decode_tps: float | None
+    e2e_tps: float | None
+
+
+class CacheTurn(PerfMetrics):
     turn_index: int
     prompt_tokens: int
     cached_tokens: int

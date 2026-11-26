@@ -5,8 +5,9 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "kohaku-context-lens"
 version = "0.1.0"
-description = "Read-only context anatomy for KohakuTerrarium sessions."
+description = "Read-only context anatomy, KV cache forensics, speed telemetry, and lossless handoff for KohakuTerrarium sessions."
 readme = "README.md"
+license = { text = "MIT" }
 requires-python = ">=3.12"
 
 [tool.setuptools.packages.find]
